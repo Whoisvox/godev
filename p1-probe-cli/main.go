@@ -9,11 +9,13 @@ import (
 	"time"
 )
 
+type Latency time.Duration
+
 type Response struct {
-	URL        string        `json:"url,omitempty"`
-	StatusCode int           `json:"status_code,omitempty"`
-	Latency    time.Duration `json:"latency,omitempty"`
-	Err        string        `json:"err,omitempty"`
+	URL        string  `json:"url,omitempty"`
+	StatusCode int     `json:"status_code,omitempty"`
+	Latency    Latency `json:"latency,omitempty"`
+	Err        string  `json:"err,omitempty"`
 }
 
 func main() {
@@ -42,25 +44,31 @@ func main() {
 func probe(url string) Response {
 	start := time.Now()
 
-	resq, err := http.Get(url)
+	client := &http.Client{
+		Timeout: 3 * time.Second,
+	}
+	resp, err := client.Get(url)
 	latency := time.Since(start)
 	if err != nil {
 		return Response{
 			URL:        url,
 			StatusCode: 0,
-			Latency:    time.Duration(latency) * time.Millisecond,
+			Latency:    Latency(latency),
 			Err:        err.Error(),
 		}
 	}
-	defer resq.Body.Close()
+	defer resp.Body.Close()
 
-	io.Copy(io.Discard, io.LimitReader(resq.Body, 4096))
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 
 	return Response{
 		URL:        url,
-		StatusCode: resq.StatusCode,
-		Latency:    time.Duration(latency) * time.Millisecond,
-		Err:        "",
+		StatusCode: resp.StatusCode,
+		Latency:    Latency(latency),
 	}
 
+}
+
+func (d Latency) MarshalJSON() ([]byte, error) {
+	return json.Marshal(time.Duration(d).String())
 }
