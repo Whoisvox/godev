@@ -1,0 +1,6 @@
+# 编译产物
+p1-probe-cli/probe-cli
+
+*.exe
+
+bin/
