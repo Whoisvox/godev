@@ -1,6 +1,10 @@
-# 编译产物
-p1-probe-cli/probe-cli
-
-*.exe
-
+# 编译产物（bin/ 目录下的二进制）
 bin/
+*.exe
+*.test
+*.out
+
+# 覆盖率
+coverage.out
+
+# 注意：不要忽略 cmd/ —— 那是源码目录！
