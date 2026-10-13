@@ -23,7 +23,7 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("read config %s: %w", path, err)
 	}
 	if len(data) == 0 {
-		return nil, fmt.Errorf("fail fast")
+		return nil, fmt.Errorf("config file %s is empty", path)
 	}
 
 	var cfg Config
