@@ -1,10 +1,14 @@
 package probe
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
+	"sync"
 	"time"
+
+	"github.com/Whoisvox/godev/probe-cli/internal/config"
 )
 
 type Latency time.Duration
@@ -42,6 +46,30 @@ func Probe(url string) Response {
 		Latency:    Latency(latency),
 	}
 
+}
+
+func All(ctx context.Context, targets []config.Target, concurrency int) []Response {
+	var wg sync.WaitGroup
+	jobs := make(chan string, len(targets))
+	responses := []Response{}
+
+	for _, target := range targets {
+		jobs <- target.URL
+	}
+
+	for w := 1; w <= concurrency; w++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for job := range jobs {
+				responses = append(responses, Probe(job))
+			}
+		}(w)
+	}
+
+	close(jobs)
+	wg.Wait()
+	return responses
 }
 
 func (d Latency) MarshalJSON() ([]byte, error) {

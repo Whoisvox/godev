@@ -1,7 +1,70 @@
 targets:
-  - name: httpbin
+  # --- 正常响应 ---
+  - name: httpbin-get
     url: https://httpbin.org/get
-  - name: not-exist
-    url: https://youcantfindme.com
-  - name: slow
+  - name: httpbin-headers
+    url: https://httpbin.org/headers
+  - name: httpbin-user-agent
+    url: https://httpbin.org/user-agent
+  - name: httpbin-uuid
+    url: https://httpbin.org/uuid
+  - name: httpbin-ip
+    url: https://httpbin.org/ip
+  - name: httpbin-base64
+    url: https://httpbin.org/base64/SGVsbG8gV29ybGQ=
+  - name: httpbin-json
+    url: https://httpbin.org/json
+  - name: httpbin-robots
+    url: https://httpbin.org/robots.txt
+
+  # --- 延迟 / 慢响应 ---
+  - name: slow-1s
+    url: https://httpbin.org/delay/1
+  - name: slow-2s
     url: https://httpbin.org/delay/2
+  - name: slow-3s
+    url: https://httpbin.org/delay/3
+  - name: slow-5s
+    url: https://httpbin.org/delay/5
+
+  # --- 重定向 ---
+  - name: redirect-1
+    url: https://httpbin.org/redirect/1
+  - name: redirect-3
+    url: https://httpbin.org/redirect/3
+  - name: redirect-loop
+    url: https://httpbin.org/redirect/10
+  - name: redirect-to-https
+    url: https://httpbin.org/redirect-to?url=https://example.com
+
+  # --- 不同状态码 ---
+  - name: status-200
+    url: https://httpbin.org/status/200
+  - name: status-404
+    url: https://httpbin.org/status/404
+  - name: status-500
+    url: https://httpbin.org/status/500
+  - name: status-503
+    url: https://httpbin.org/status/503
+
+  # --- 不存在 / 必然失败 ---
+  - name: not-exist-1
+    url: https://youcantfindme.com
+  - name: not-exist-2
+    url: https://thissitedoesnotexist-12345.com
+  - name: not-exist-3
+    url: https://invalid.tld.xyz
+
+  # --- 大响应体 ---
+  - name: bytes-1kb
+    url: https://httpbin.org/bytes/1024
+  - name: bytes-10kb
+    url: https://httpbin.org/bytes/10240
+  - name: stream-5
+    url: https://httpbin.org/stream/5
+
+  # --- 其他 ---
+  - name: example-com
+    url: https://example.com
+  - name: example-org
+    url: https://example.org

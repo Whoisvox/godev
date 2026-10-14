@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 )
 
 var configPath string
+var concurrency int
 
 func main() {
 	rootCmd := &cobra.Command{
@@ -28,9 +30,7 @@ func main() {
 			}
 			var respSet []probe.Response
 			// traverse cfg.Targets and call for each target probe.Probe, output json
-			for _, target := range cfg.Targets {
-				respSet = append(respSet, probe.Probe(target.URL))
-			}
+			respSet = probe.All(context.Background(), cfg.Targets, concurrency)
 			data, err := json.Marshal(respSet)
 			if err != nil {
 				return err
@@ -41,6 +41,7 @@ func main() {
 	}
 
 	runCmd.Flags().StringVarP(&configPath, "config", "c", "targets.yaml", "配置文件路径")
+	runCmd.Flags().IntVarP(&concurrency, "concurrency", "n", 10, "并发数量")
 	rootCmd.AddCommand(runCmd)
 	if rootCmd.Execute() != nil {
 		os.Exit(1)
