@@ -14,23 +14,22 @@ import (
 type Latency time.Duration
 
 type Response struct {
+	Name       string  `json:"name,omitempty"`
 	URL        string  `json:"url,omitempty"`
 	StatusCode int     `json:"status_code,omitempty"`
 	Latency    Latency `json:"latency,omitempty"`
 	Err        string  `json:"err,omitempty"`
 }
 
-func Probe(url string) Response {
+func Probe(client *http.Client, target config.Target) Response {
 	start := time.Now()
 
-	client := &http.Client{
-		Timeout: 3 * time.Second,
-	}
-	resp, err := client.Get(url)
+	resp, err := client.Get(target.URL)
 	latency := time.Since(start)
 	if err != nil {
 		return Response{
-			URL:        url,
+			Name:       target.Name,
+			URL:        target.URL,
 			StatusCode: 0,
 			Latency:    Latency(latency),
 			Err:        err.Error(),
@@ -41,7 +40,8 @@ func Probe(url string) Response {
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 
 	return Response{
-		URL:        url,
+		Name:       target.Name,
+		URL:        target.URL,
 		StatusCode: resp.StatusCode,
 		Latency:    Latency(latency),
 	}
@@ -49,12 +49,16 @@ func Probe(url string) Response {
 }
 
 func All(ctx context.Context, targets []config.Target, concurrency int) []Response {
+	client := &http.Client{
+		Timeout: 3 * time.Second,
+	}
 	var wg sync.WaitGroup
-	jobs := make(chan string, len(targets))
+	jobs := make(chan config.Target, len(targets))
+	results := make(chan Response, len(targets))
 	responses := []Response{}
 
 	for _, target := range targets {
-		jobs <- target.URL
+		jobs <- target
 	}
 
 	for w := 1; w <= concurrency; w++ {
@@ -62,13 +66,20 @@ func All(ctx context.Context, targets []config.Target, concurrency int) []Respon
 		go func(id int) {
 			defer wg.Done()
 			for job := range jobs {
-				responses = append(responses, Probe(job))
+				results <- Probe(client, job)
 			}
 		}(w)
 	}
 
 	close(jobs)
-	wg.Wait()
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	for result := range results {
+		responses = append(responses, result)
+	}
 	return responses
 }
 

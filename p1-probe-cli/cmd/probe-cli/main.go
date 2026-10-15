@@ -8,6 +8,7 @@ import (
 
 	"github.com/Whoisvox/godev/probe-cli/internal/config"
 	"github.com/Whoisvox/godev/probe-cli/internal/probe"
+	"github.com/labstack/gommon/log"
 	"github.com/spf13/cobra"
 )
 
@@ -28,9 +29,12 @@ func main() {
 			if err != nil {
 				return err
 			}
-			var respSet []probe.Response
+			if len(cfg.Targets) > 1024 {
+				log.Warn("Targets length too long")
+				return nil
+			}
 			// traverse cfg.Targets and call for each target probe.Probe, output json
-			respSet = probe.All(context.Background(), cfg.Targets, concurrency)
+			respSet := probe.All(context.Background(), cfg.Targets, concurrency)
 			data, err := json.Marshal(respSet)
 			if err != nil {
 				return err
