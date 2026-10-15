@@ -21,10 +21,20 @@ type Response struct {
 	Err        string  `json:"err,omitempty"`
 }
 
-func Probe(client *http.Client, target config.Target) Response {
+func Probe(ctx context.Context, client *http.Client, target config.Target) Response {
+	req, err := http.NewRequestWithContext(ctx, "GET", target.URL, nil)
+	if err != nil {
+		return Response{
+			Name:       target.Name,
+			URL:        target.URL,
+			StatusCode: 0,
+			Latency:    0,
+			Err:        err.Error(),
+		}
+	}
 	start := time.Now()
 
-	resp, err := client.Get(target.URL)
+	resp, err := client.Do(req)
 	latency := time.Since(start)
 	if err != nil {
 		return Response{
@@ -48,14 +58,12 @@ func Probe(client *http.Client, target config.Target) Response {
 
 }
 
-func All(ctx context.Context, targets []config.Target, concurrency int) []Response {
-	client := &http.Client{
-		Timeout: 3 * time.Second,
-	}
+func All(ctx context.Context, targets []config.Target, concurrency int, timeout time.Duration) []Response {
+	client := &http.Client{}
 	var wg sync.WaitGroup
 	jobs := make(chan config.Target, len(targets))
 	results := make(chan Response, len(targets))
-	responses := []Response{}
+	responses := make([]Response, 0, len(targets))
 
 	for _, target := range targets {
 		jobs <- target
@@ -66,7 +74,14 @@ func All(ctx context.Context, targets []config.Target, concurrency int) []Respon
 		go func(id int) {
 			defer wg.Done()
 			for job := range jobs {
-				results <- Probe(client, job)
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					probeCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+					results <- Probe(probeCtx, client, job)
+					cancel()
+				}
 			}
 		}(w)
 	}

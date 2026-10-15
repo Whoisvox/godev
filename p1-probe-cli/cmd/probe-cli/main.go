@@ -5,15 +5,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/Whoisvox/godev/probe-cli/internal/config"
 	"github.com/Whoisvox/godev/probe-cli/internal/probe"
-	"github.com/labstack/gommon/log"
 	"github.com/spf13/cobra"
 )
 
 var configPath string
 var concurrency int
+var timeout time.Duration
 
 func main() {
 	rootCmd := &cobra.Command{
@@ -25,16 +28,18 @@ func main() {
 		Use:   "run",
 		Short: "执行一次探测",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if concurrency < 1 || timeout <= 0 {
+				return fmt.Errorf("invalid -- concurrency %d: must be >= 1", concurrency)
+			}
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+
 			cfg, err := config.Load(configPath)
 			if err != nil {
 				return err
 			}
-			if len(cfg.Targets) > 1024 {
-				log.Warn("Targets length too long")
-				return nil
-			}
 			// traverse cfg.Targets and call for each target probe.Probe, output json
-			respSet := probe.All(context.Background(), cfg.Targets, concurrency)
+			respSet := probe.All(ctx, cfg.Targets, concurrency, timeout)
 			data, err := json.Marshal(respSet)
 			if err != nil {
 				return err
@@ -46,6 +51,7 @@ func main() {
 
 	runCmd.Flags().StringVarP(&configPath, "config", "c", "targets.yaml", "配置文件路径")
 	runCmd.Flags().IntVarP(&concurrency, "concurrency", "n", 10, "并发数量")
+	runCmd.Flags().DurationVarP(&timeout, "timeout", "t", 3*time.Second, "单个请求超时时间")
 	rootCmd.AddCommand(runCmd)
 	if rootCmd.Execute() != nil {
 		os.Exit(1)
