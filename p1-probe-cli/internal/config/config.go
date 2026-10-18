@@ -26,16 +26,15 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("config file %s is empty", path)
 	}
 
-	if len(data) > 1024 {
-		return nil, fmt.Errorf("targets too long")
-	}
-
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 	if len(cfg.Targets) == 0 {
 		return nil, errors.New("config: no targets defined")
+	}
+	if len(cfg.Targets) > 1024 {
+		return nil, fmt.Errorf("targets too long")
 	}
 
 	return &cfg, nil

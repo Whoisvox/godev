@@ -3,7 +3,9 @@ package probe
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -18,7 +20,19 @@ type Response struct {
 	URL        string  `json:"url,omitempty"`
 	StatusCode int     `json:"status_code,omitempty"`
 	Latency    Latency `json:"latency,omitempty"`
-	Err        string  `json:"err,omitempty"`
+	ErrMsg     string  `json:"err,omitempty"`
+	err        error
+}
+
+type RetryConfig struct {
+	MaxRetries int
+	BaseDelay  time.Duration
+}
+
+type ProbeOptions struct {
+	Concurrency int
+	Timeout     time.Duration
+	RetryCfg    RetryConfig
 }
 
 func Probe(ctx context.Context, client *http.Client, target config.Target) Response {
@@ -29,7 +43,8 @@ func Probe(ctx context.Context, client *http.Client, target config.Target) Respo
 			URL:        target.URL,
 			StatusCode: 0,
 			Latency:    0,
-			Err:        err.Error(),
+			ErrMsg:     err.Error(),
+			err:        err,
 		}
 	}
 	start := time.Now()
@@ -42,7 +57,8 @@ func Probe(ctx context.Context, client *http.Client, target config.Target) Respo
 			URL:        target.URL,
 			StatusCode: 0,
 			Latency:    Latency(latency),
-			Err:        err.Error(),
+			ErrMsg:     err.Error(),
+			err:        err,
 		}
 	}
 	defer resp.Body.Close()
@@ -58,7 +74,7 @@ func Probe(ctx context.Context, client *http.Client, target config.Target) Respo
 
 }
 
-func All(ctx context.Context, targets []config.Target, concurrency int, timeout time.Duration) []Response {
+func All(ctx context.Context, targets []config.Target, probeOptions ProbeOptions) []Response {
 	client := &http.Client{}
 	var wg sync.WaitGroup
 	jobs := make(chan config.Target, len(targets))
@@ -69,7 +85,7 @@ func All(ctx context.Context, targets []config.Target, concurrency int, timeout 
 		jobs <- target
 	}
 
-	for w := 1; w <= concurrency; w++ {
+	for w := 1; w <= probeOptions.Concurrency; w++ {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
@@ -78,8 +94,8 @@ func All(ctx context.Context, targets []config.Target, concurrency int, timeout 
 				case <-ctx.Done():
 					return
 				default:
-					probeCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
-					results <- Probe(probeCtx, client, job)
+					probeCtx, cancel := context.WithTimeout(ctx, probeOptions.Timeout)
+					results <- ProbeWithRetry(probeCtx, client, job, probeOptions.RetryCfg)
 					cancel()
 				}
 			}
@@ -98,6 +114,60 @@ func All(ctx context.Context, targets []config.Target, concurrency int, timeout 
 	return responses
 }
 
+func ProbeWithRetry(ctx context.Context, client *http.Client, target config.Target, retryCfg RetryConfig) Response {
+	var lastResp Response
+
+	for attempt := 0; attempt <= retryCfg.MaxRetries; attempt++ {
+		// if not first try, keep await
+		if attempt > 0 {
+			backoff := retryCfg.BaseDelay * time.Duration(1<<(attempt-1))
+
+			select {
+			case <-ctx.Done():
+				lastResp.ErrMsg = ctx.Err().Error()
+				lastResp.err = ctx.Err()
+				return lastResp
+			case <-time.After(backoff):
+			}
+		}
+
+		// call primary Probe
+		lastResp = Probe(ctx, client, target)
+
+		// select if it is retryable
+		if !isRetryable(lastResp) {
+			return lastResp
+		}
+	}
+
+	// retry celling
+	return lastResp
+}
+
 func (d Latency) MarshalJSON() ([]byte, error) {
 	return json.Marshal(time.Duration(d).String())
+}
+
+func isRetryable(resp Response) bool {
+	if resp.err != nil {
+		// ctx cancled/deadline, shouldn't retry
+		if errors.Is(resp.err, context.Canceled) {
+			return false
+		}
+		if errors.Is(resp.err, context.DeadlineExceeded) {
+			return false
+		}
+
+		var dnsErr *net.DNSError
+		if errors.As(resp.err, &dnsErr) {
+			return false
+		}
+		var netErr net.Error
+		if errors.As(resp.err, &netErr) {
+			return netErr.Timeout()
+		}
+		return false
+	}
+
+	return resp.StatusCode > 499 || resp.StatusCode == 429
 }

@@ -64,7 +64,7 @@ root@vox-174:p1-probe-cli#
 # v3
 ## stepA
 **添加了-t/--timeout配置，改超时总耗时会变化，和短板效应一样, 手动ctrl+C会全部取消，err全部是context canceled**
-*当用户ctrl+C发送sigterm信号时，ctx.Done()通道会被写，此时每个woker的select<-ctx.Done()为真，分支转到这里，执行return然后wg.Done()，而之前开的子probeCtx是ctx设置了超时时间的，当父ctx关闭时，父ctx的done channel信号发出，会遍历自己的children列表，对每个子ctx递归调cancel()，子再递归自己，最终整颗树全部关闭。不调cancel()，如果是带截止时间的，截止时间之前还会挂载树上。如果是background这种，则会永久挂在树上，存在泄露问题。*
+*当用户ctrl+C发送sigint信号时，ctx.Done()通道会被写，此时每个woker的select<-ctx.Done()为真，分支转到这里，执行return然后wg.Done()，而之前开的子probeCtx是ctx设置了超时时间的，当父ctx关闭时，父ctx的done channel信号发出，会遍历自己的children列表，对每个子ctx递归调cancel()，子再递归自己，最终整颗树全部关闭。不调cancel()，如果是带截止时间的，截止时间之前还会挂载树上。如果是background这种，则会永久挂在树上，存在泄露问题。*
 root@vox-174:p1-probe-cli# golangci-lint run ./...
 root@vox-174:p1-probe-cli# 
 root@vox-174:p1-probe-cli# go run ./cmd/probe-cli/main.go run -c targets.yaml -n 10 -t 5
@@ -95,3 +95,46 @@ real    0m3.297s
 user    0m0.389s
 sys     0m0.167s
 root@vox-174:p1-probe-cli#
+
+# v4
+## step0 v3 返工
+
+## stepA retry index obviod td test
+1. 三个决策
+*值得重试的错误，对于dns解析失败，不重试，短时间内大概率还是失败。连接拒绝也是，超时可以重试，可能是短时间触发远端限流，500也是，可以重试，一般来说很快回恢复。404不重试。*
+*time.After和ctx.Done()再一块select，如果用分支，则就是同时执行，无非谁先后的问题，这里是保证ctx.Done()再ctrlC发sigint信号父ctx终止时候立即触发ctx树退出，不会执行time.After()，如果只有time.Sleep()，则会持续到最大重试次数，*
+*精简一些，算最后一次耗时即可*
+*probeCtx超时不重试，因为ctx已经超时死了，重试必然失败。我们重试的原则是暂时性失败*
+
+2. 返工
+root@vox-174:p1-probe-cli# go run cmd/server/main.go &
+[1] 71021
+root@vox-174:p1-probe-cli# server got request #1
+server got request #2
+server got request #3
+
+root@vox-174:p1-probe-cli# 
+root@vox-174:p1-probe-cli# pkill -f cmd/server/
+[1]+  Terminated              go run cmd/server/main.go
+---
+root@vox-174:p1-probe-cli# go run -race ./cmd/probe-cli/main.go run -c targets_test.yaml -n 1 -t 3
+s -N 5
+[{"name":"503","url":"http://127.0.0.1:18081/","status_code":200,"latency":"995.214µs"}]
+root@vox-174:p1-probe-cli# 
+root@vox-174:p1-probe-cli# go test -race ./...
+?       github.com/Whoisvox/godev/probe-cli/cmd/probe-cli       [no test files]
+?       github.com/Whoisvox/godev/probe-cli/cmd/server  [no test files]
+?       github.com/Whoisvox/godev/probe-cli/internal/config     [no test files]
+ok      github.com/Whoisvox/godev/probe-cli/internal/probe      1.032s
+root@vox-174:p1-probe-cli# 
+root@vox-174:p1-probe-cli# 
+root@vox-174:p1-probe-cli# golangci-lint run ./...
+cmd/server/main.go:22:21: Error return value of `http.ListenAndServe` is not checked (errcheck)
+        http.ListenAndServe("127.0.0.1:18081", nil)
+                           ^
+root@vox-174:p1-probe-cli# make tidy
+go mod tidy
+root@vox-174:p1-probe-cli# golangci-lint run ./...
+root@vox-174:p1-probe-cli# 
+
+*清理干净环境再验后，probe-cli会输出最后一次的200，而起的server中也出现了3次retry，这里我遇到order-dependent的测试环境问题，由于server前两次返回503，3次以后才200，而这依赖一个全局的计数器，当环境未清理干净时，访问会直接200*
