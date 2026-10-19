@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -282,5 +283,41 @@ func TestProbeRetry_CanceledDuringBackoff(t *testing.T) {
 	// so elapsed actually great a little bit than 100ms
 	if elapsed >= 500*time.Millisecond {
 		t.Errorf("elapsed = %v, want < 500ms", elapsed)
+	}
+}
+
+func TestAll_NoGoroutineLeak(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	runtime.GC()
+	before := runtime.NumGoroutine()
+
+	ctx := context.Background()
+	targets := []config.Target{
+		{Name: "Alice", URL: srv.URL},
+		{Name: "Bob", URL: srv.URL},
+	}
+	opts := ProbeOptions{
+		Concurrency: 2,
+		Timeout:     3 * time.Second,
+		RetryCfg: RetryConfig{
+			MaxRetries: 3,
+			BaseDelay:  time.Microsecond,
+		},
+	}
+
+	All(ctx, targets, opts)
+
+	srv.CloseClientConnections()
+	time.Sleep(100 * time.Millisecond)
+	runtime.GC()
+	after := runtime.NumGoroutine()
+
+	// GC自己的goroutine
+	if after > before+1 {
+		t.Errorf("goroutine leak: before=%d after=%d", before, after)
 	}
 }

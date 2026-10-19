@@ -24,17 +24,24 @@ GOFLAGS   := -trimpath
 # ---------- 默认目标 ----------
 .DEFAULT_GOAL := help
 
-.PHONY: help build install run test race cover lint fmt vet tidy clean docker push k8s
+.PHONY: help build install run test race cover lint fmt vet tidy clean docker push k8s targets1000
 
 help: ## 显示所有可用目标
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
 # ---------- 构建 ----------
-build: ## 编译到 bin/
+build: ## 编译 probe-cli + loadgen 到 bin/
 	@mkdir -p $(BIN_DIR)
 	go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY) $(CMD_DIR)
-	@echo "OK -> $(BIN_DIR)/$(BINARY) ($(VERSION) $(COMMIT))"
+	go build $(GOFLAGS) -o $(BIN_DIR)/loadgen ./cmd/loadgen
+	@echo "OK -> $(BIN_DIR)/$(BINARY) + $(BIN_DIR)/loadgen ($(VERSION) $(COMMIT))"
+
+targets1000: ## 生成 1000 目标压测配置 targets1000.yaml（生成物，不入库）
+	@{ echo "targets:"; \
+	   seq 1 1000 | awk '{printf "  - name: target-%d\n    url: http://localhost:18081/target/%d\n", $$1, $$1}'; \
+	 } > targets1000.yaml
+	@echo "OK -> targets1000.yaml ($$(grep -c 'url:' targets1000.yaml) targets)"
 
 install: ## 安装到 GOBIN
 	go install $(GOFLAGS) -ldflags "$(LDFLAGS)" $(CMD_DIR)

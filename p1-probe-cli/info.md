@@ -184,3 +184,69 @@ FAIL
 root@vox-174:p1-probe-cli# 
 
 2. 更改isRetryable使得ctx.DeadlineExceeded为true，若n计数在server端，预期n=1，若n计数在client端，由于ProbeWithRetry()的select，ctx.Done后不会再掉Probe()，而计数需要client.Do()实现自增，于是也还是1
+
+# v5
+## stepA
+1. 为什么允许 +1 抖动
+退出的goroutine从计数器中移除是异步的--虽然他已经跑完了逻辑，但是runtime还没把它从计数摘除，sleep 100ms其实也不能100%保证；另外，测试框架/runtime自身有背景goroutine(信号处理、forcegc等)，数量随环境浮动。严格相等的测试会偶发变红(flaky)，而flaky测试比没有测试更遭，工程管理会有小幅度的误差容忍，大幅度才告警。
+2. 为什么All返回后还要sleep再测
+因为All返回的瞬间，close(results)的goroutine可能还在"已close, 未退出"的窗口里，sleep是给它排空时间。
+
+**1000压测，我写了单独的loadgen.go，使用了pprof，压测结果如下**
+*其中总请求数量在1100左右浮动*
+root@vox-174:p1-probe-cli# curl -s http://localhost:18081/stats
+total_requests=1102
+root@vox-174:p1-probe-cli# 
+root@vox-174:p1-probe-cli# 
+root@vox-174:p1-probe-cli# curl -s 'http://127.0.0.1:6060/debug/pprof/goroutine?debug=1' | head -50
+goroutine profile: total 13
+2 @ 0x47d06e 0x43f777 0x47c245 0x4d8ca7 0x4d97f9 0x4d97e7 0x55eb05 0x568185 0x65da34 0x5ef3a3 0x5ef4d3 0x6631a5 0x485021
+#       0x47c244        internal/poll.runtime_pollWait+0x84             /opt/go/src/runtime/netpoll.go:351
+#       0x4d8ca6        internal/poll.(*pollDesc).wait+0x26             /opt/go/src/internal/poll/fd_poll_runtime.go:84
+#       0x4d97f8        internal/poll.(*pollDesc).waitRead+0x278        /opt/go/src/internal/poll/fd_poll_runtime.go:89
+#       0x4d97e6        internal/poll.(*FD).Read+0x266                  /opt/go/src/internal/poll/fd_unix.go:165
+#       0x55eb04        net.(*netFD).Read+0x24                          /opt/go/src/net/fd_posix.go:68
+#       0x568184        net.(*conn).Read+0x44                           /opt/go/src/net/net.go:196
+#       0x65da33        net/http.(*connReader).Read+0x153               /opt/go/src/net/http/server.go:812
+#       0x5ef3a2        bufio.(*Reader).fill+0x102                      /opt/go/src/bufio/bufio.go:113
+#       0x5ef4d2        bufio.(*Reader).Peek+0x52                       /opt/go/src/bufio/bufio.go:152
+#       0x6631a4        net/http.(*conn).serve+0x7c4                    /opt/go/src/net/http/server.go:2145
+
+2 @ 0x47d06e 0x43f777 0x47c245 0x4d8ca7 0x4d97f9 0x4d97e7 0x55eb05 0x568185 0x67b7e7 0x5ef3a3 0x5ef4d3 0x67c2f2 0x485021
+#       0x47c244        internal/poll.runtime_pollWait+0x84             /opt/go/src/runtime/netpoll.go:351
+#       0x4d8ca6        internal/poll.(*pollDesc).wait+0x26             /opt/go/src/internal/poll/fd_poll_runtime.go:84
+#       0x4d97f8        internal/poll.(*pollDesc).waitRead+0x278        /opt/go/src/internal/poll/fd_poll_runtime.go:89
+#       0x4d97e6        internal/poll.(*FD).Read+0x266                  /opt/go/src/internal/poll/fd_unix.go:165
+#       0x55eb04        net.(*netFD).Read+0x24                          /opt/go/src/net/fd_posix.go:68
+#       0x568184        net.(*conn).Read+0x44                           /opt/go/src/net/net.go:196
+#       0x67b7e6        net/http.(*persistConn).Read+0x46               /opt/go/src/net/http/transport.go:2125
+#       0x5ef3a2        bufio.(*Reader).fill+0x102                      /opt/go/src/bufio/bufio.go:113
+#       0x5ef4d2        bufio.(*Reader).Peek+0x52                       /opt/go/src/bufio/bufio.go:152
+#       0x67c2f1        net/http.(*persistConn).readLoop+0x171          /opt/go/src/net/http/transport.go:2278
+
+2 @ 0x47d06e 0x459e97 0x67dd07 0x485021
+#       0x67dd06        net/http.(*persistConn).writeLoop+0xe6  /opt/go/src/net/http/transport.go:2600
+
+1 @ 0x417649 0x47efa9 0x6db713 0x485021
+#       0x47efa8        os/signal.signal_recv+0x28      /opt/go/src/runtime/sigqueue.go:152
+#       0x6db712        os/signal.loop+0x12             /opt/go/src/os/signal/signal_unix.go:23
+
+1 @ 0x43c271 0x47be9d 0x6bcdb1 0x6bcbc5 0x6b9a4b 0x6d4caa 0x6d575a 0x664b89 0x666a07 0x681bae 0x663045 0x485021
+#       0x6bcdb0        runtime/pprof.writeRuntimeProfile+0xb0  /opt/go/src/runtime/pprof/pprof.go:788
+#       0x6bcbc4        runtime/pprof.writeGoroutine+0x44       /opt/go/src/runtime/pprof/pprof.go:747
+#       0x6b9a4a        runtime/pprof.(*Profile).WriteTo+0x14a  /opt/go/src/runtime/pprof/pprof.go:371
+#       0x6d4ca9        net/http/pprof.handler.ServeHTTP+0x529  /opt/go/src/net/http/pprof/pprof.go:272
+#       0x6d5759        net/http/pprof.Index+0xd9               /opt/go/src/net/http/pprof/pprof.go:389
+#       0x664b88        net/http.HandlerFunc.ServeHTTP+0x28     /opt/go/src/net/http/server.go:2322
+#       0x666a06        net/http.(*ServeMux).ServeHTTP+0x1c6    /opt/go/src/net/http/server.go:2861
+#       0x681bad        net/http.serverHandler.ServeHTTP+0x8d   /opt/go/src/net/http/server.go:3340
+#       0x663044        net/http.(*conn).serve+0x664            /opt/go/src/net/http/server.go:2109
+
+1 @ 0x47d06e 0x43f777 0x47c245 0x4d8ca7 0x4d97f9 0x4d97e7 0x55eb05 0x568185 0x65d5b3 0x485021
+#       0x47c244        internal/poll.runtime_pollWait+0x84             /opt/go/src/runtime/netpoll.go:351
+#       0x4d8ca6        internal/poll.(*pollDesc).wait+0x26             /opt/go/src/internal/poll/fd_poll_runtime.go:84
+#       0x4d97f8        internal/poll.(*pollDesc).waitRead+0x278        /opt/go/src/internal/poll/fd_poll_runtime.go:89
+#       0x4d97e6        internal/poll.(*FD).Read+0x266                  /opt/go/src/internal/poll/fd_unix.go:165
+#       0x55eb04        net.(*netFD).Read+0x24                          /opt/go/src/net/fd_posix.go:68
+#       0x568184        net.(*conn).Read+0x44                           /opt/go/src/net/net.go:196
+root@vox-174:p1-probe-cli# 

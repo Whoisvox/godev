@@ -7,4 +7,8 @@ bin/
 # 覆盖率
 coverage.out
 
+# 压测生成物与产物（make targets1000 重新生成）
+p1-probe-cli/targets1000.yaml
+p1-probe-cli/output*.json
+
 # 注意：不要忽略 cmd/ —— 那是源码目录！
