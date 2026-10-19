@@ -116,7 +116,6 @@ server got request #3
 root@vox-174:p1-probe-cli# 
 root@vox-174:p1-probe-cli# pkill -f cmd/server/
 [1]+  Terminated              go run cmd/server/main.go
----
 root@vox-174:p1-probe-cli# go run -race ./cmd/probe-cli/main.go run -c targets_test.yaml -n 1 -t 3
 s -N 5
 [{"name":"503","url":"http://127.0.0.1:18081/","status_code":200,"latency":"995.214µs"}]
@@ -138,3 +137,50 @@ root@vox-174:p1-probe-cli# golangci-lint run ./...
 root@vox-174:p1-probe-cli# 
 
 *清理干净环境再验后，probe-cli会输出最后一次的200，而起的server中也出现了3次retry，这里我遇到order-dependent的测试环境问题，由于server前两次返回503，3次以后才200，而这依赖一个全局的计数器，当环境未清理干净时，访问会直接200*
+
+## stepB httptest集成测试+Dockerfile+Harbor
+ => [internal] load build definition from Dockerfile                                         0.0s 
+ => => transferring dockerfile: 579B                                                         0.0s 
+ => [internal] load metadata for docker.io/library/golang:1.25-alpine                        0.0s 
+ => [internal] load .dockerignore                                                            0.0s 
+ => => transferring context: 80B                                                             0.0s 
+ => [builder 1/6] FROM docker.io/library/golang:1.25-alpine                                  0.2s 
+ => [internal] load build context                                                            0.2s 
+ => => transferring context: 1.21kB                                                          0.0s 
+ => [builder 2/6] WORKDIR /src                                                               0.1s 
+ => [builder 3/6] COPY go.mod go.sum ./                                                      0.1s
+ => [builder 4/6] RUN go mod download          # 依赖层单独 COPY：代码改动不会�       0.8sr 6/6] RUN CGO_ENABLED=0 GOOS=linux go build -trimpath     -ldflags "-s -w" -o   26.6s
+ => [builder 5/6] COPY . .                                                                   0.0s
+ => [builder 6/6] RUN CGO_ENABLED=0 GOOS=linux go build -trimpath     -ldflags "-s -w" -o   26.6s
+ => [stage-1 1/2] COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/     0.1s
+ => [stage-1 2/2] COPY --from=builder /out/probe-cli /probe-cli                              0.0s
+ => exporting to image                                                                       0.2s
+ => => exporting layers                                                                      0.1s
+ => => writing image sha256:a11647dafb9bfed836e7cfc4a0a69b4e874fee760ef4f1436aeebe044dfba3b  0.0s
+ => => naming to 192.168.5.174:80/godev/probe-cli:689816e-dirty                              0.0s
+OK -> 192.168.5.174:80/godev/probe-cli:689816e-dirty
+docker push 192.168.5.174:80/godev/probe-cli:689816e-dirty
+The push refers to repository [192.168.5.174:80/godev/probe-cli]
+c2c35d23e020: Pushed 
+604c903cca76: Pushed 
+689816e-dirty: digest: sha256:f6cb9d537fc931d4ef3a32d49b72718de1a5fc05a92d46d7a59a690da86582b6 size: 738
+root@vox-174:p1-probe-cli# docker images | grep probe-cli
+192.168.5.174:80/godev/probe-cli                                                        689816e-dirty        a11647dafb9b   3 minutes ago   6.86MB
+root@vox-174:p1-probe-cli# 
+root@vox-174:p1-probe-cli# docker run --rm -v $PWD/targets.yaml:/targets.yaml:ro \
+> 192.168.5.174:80/godev/probe-cli:689816e-dirty run -c /targets.yaml -n 5 -t 3s
+[{"name":"httpbin-uuid","url":"https://httpbin.org/uuid","status_code":200,"latency":"1.31454139s"},{"name":"httpbin-ip","url":"https://httpbin.org/ip","status_code":200,"latency":"1.314638082s"},{"name":"httpbin-headers","url":"https://httpbin.org/headers","status_code":200,"latency":"1.315126879s"},{"name":"httpbin-get","url":"https://httpbin.org/get","status_code":200,"latency":"1.315458711s"},{"name":"httpbin-user-agent","url":"https://httpbin.org/user-agent","status_code":200,"latency":"1.315417947s"},{"name":"httpbin-base64","url":"https://httpbin.org/base64/SGVsbG8gV29ybGQ=","status_code":200,"latency":"212.595638ms"},{"name":"httpbin-robots","url":"https://httpbin.org/robots.txt","status_code":200,"latency":"213.227835ms"},{"name":"httpbin-json","url":"https://httpbin.org/json","status_code":200,"latency":"423.091035ms"},{"name":"slow-1s","url":"https://httpbin.org/delay/1","status_code":200,"latency":"1.666891961s"},{"name":"redirect-1","url":"https://httpbin.org/redirect/1","status_code":200,"latency":"1.665964886s"},{"name":"slow-2s","url":"https://httpbin.org/delay/2","status_code":200,"latency":"2.389288906s"},{"name":"redirect-3","url":"https://httpbin.org/redirect/3","status_code":200,"latency":"848.618757ms"},{"name":"status-200","url":"https://httpbin.org/status/200","status_code":200,"latency":"209.654167ms"},{"name":"status-404","url":"https://httpbin.org/status/404","status_code":404,"latency":"209.273925ms"},{"name":"slow-5s","url":"https://httpbin.org/delay/5","latency":"3.000206788s","err":"Get \"https://httpbin.org/delay/5\": context deadline exceeded"},{"name":"slow-3s","url":"https://httpbin.org/delay/3","latency":"3.001169464s","err":"Get \"https://httpbin.org/delay/3\": context deadline exceeded"},{"name":"not-exist-1","url":"https://youcantfindme.com","latency":"17.693998ms","err":"Get \"https://youcantfindme.com\": dial tcp: lookup youcantfindme.com on 8.8.8.8:53: no such host"},{"name":"not-exist-2","url":"https://thissitedoesnotexist-12345.com","latency":"21.431986ms","err":"Get \"https://thissitedoesnotexist-12345.com\": dial tcp: lookup thissitedoesnotexist-12345.com on 8.8.8.8:53: nosuch host"},{"name":"redirect-to-https","url":"https://httpbin.org/redirect-to?url=https://example.com","status_code":200,"latency":"1.065473466s"},{"name":"bytes-1kb","url":"https://httpbin.org/bytes/1024","status_code":200,"latency":"211.880348ms"},{"name":"not-exist-3","url":"https://invalid.tld.xyz","latency":"586.769741ms","err":"Get \"https://invalid.tld.xyz\": remote error: tls: unrecognized name"},{"name":"status-500","url":"https://httpbin.org/status/500","status_code":500,"latency":"213.166075ms"},{"name":"example-com","url":"https://example.com","status_code":200,"latency":"216.753622ms"},{"name":"bytes-10kb","url":"https://httpbin.org/bytes/10240","status_code":200,"latency":"447.230937ms"},{"name":"stream-5","url":"https://httpbin.org/stream/5","status_code":200,"latency":"275.02743ms"},{"name":"status-503","url":"https://httpbin.org/status/503","status_code":503,"latency":"323.610362ms"},{"name":"redirect-loop","url":"https://httpbin.org/redirect/10","latency":"2.235189689s","err":"Get \"/get\": stopped after 10 redirects"},{"name":"example-org","url":"https://example.org","status_code":200,"latency":"656.398819ms"}]
+
+### Mutation
+1. select 改 time.Sleep(backoff)跑CanceledDuingBackoff, elasped变为了508ms
+root@vox-174:p1-probe-cli# go test ./...
+?       github.com/Whoisvox/godev/probe-cli/cmd/probe-cli       [no test files]
+?       github.com/Whoisvox/godev/probe-cli/internal/config     [no test files]
+--- FAIL: TestProbeRetry_CanceledDuringBackoff (0.50s)
+    probe_test.go:284: elapsed = 503.059057ms, want < 500ms
+FAIL
+FAIL    github.com/Whoisvox/godev/probe-cli/internal/probe      0.591s
+FAIL
+root@vox-174:p1-probe-cli# 
+
+2. 更改isRetryable使得ctx.DeadlineExceeded为true，若n计数在server端，预期n=1，若n计数在client端，由于ProbeWithRetry()的select，ctx.Done后不会再掉Probe()，而计数需要client.Do()实现自增，于是也还是1
