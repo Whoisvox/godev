@@ -190,7 +190,7 @@ root@vox-174:p1-probe-cli#
 1. 为什么允许 +1 抖动
 退出的goroutine从计数器中移除是异步的--虽然他已经跑完了逻辑，但是runtime还没把它从计数摘除，sleep 100ms其实也不能100%保证；另外，测试框架/runtime自身有背景goroutine(信号处理、forcegc等)，数量随环境浮动。严格相等的测试会偶发变红(flaky)，而flaky测试比没有测试更遭，工程管理会有小幅度的误差容忍，大幅度才告警。
 2. 为什么All返回后还要sleep再测
-因为All返回的瞬间，close(results)的goroutine可能还在"已close, 未退出"的窗口里，sleep是给它排空时间。
+因为All返回的瞬间，close(results)的goroutine可能还在"已close, 未退出"的窗口里，并不是All返回 close的goroutine就被runtime回收了, sleep是给它排空时间。
 
 **1000压测，我写了单独的loadgen.go，使用了pprof，压测结果如下**
 *其中总请求数量在1100左右浮动*
@@ -250,3 +250,62 @@ goroutine profile: total 13
 #       0x55eb04        net.(*netFD).Read+0x24                          /opt/go/src/net/fd_posix.go:68
 #       0x568184        net.(*conn).Read+0x44                           /opt/go/src/net/net.go:196
 root@vox-174:p1-probe-cli# 
+
+
+## StepB
+**4个问题 P1终审**
+1. worker pool拓扑
+submit goroutine --> jobs chan --> worker0/1/2/N --> results chan --> collector
+wg.Wait() goroutine --> close(results)
+
+jobs chan的close在submit goroutine，也就是生产者这里，发完job后就会close，close早
+了，消息没发完，close晚了/不close，worker会一直阻塞，goroutine泄露。
+results chan的close在wg.Wait goroutine中，wg.Wait()返回后close(注意，虽然close已经是最后一条语句，但是不意味着goroutine马上退出)。
+*追问*
+  1. 当前results缓冲长度为len(targets), woker发送用不阻塞。倘若有人改为无缓冲channel，而collector又因为bug提前return
+  results无缓冲时，写入后需要等待results被同步取走才可执行下一步，否则阻塞在原地。无worker仍然并发探测channel是否可写(同时发HTTP)，只是结果交接被串行化(一次只能一个worker交付，吞吐下降但探测重叠还在)，不会卡住死锁。但是当collector提前return，所有worker写入后由于没有collector的读取会进入死锁。runtime后台检查当所有goroutine都阻塞在channel/mutex/select上时，直接fatal error终止进程(不可recover)。wg.Wait()返回不了，所有worker都死锁了，后面死锁检测到后整个程序退出os.Exit(2)。
+  但开了--pprof就失效了，runtime的死锁检测不把网络IO等待(netpoll)算作asleep，pprof的HTTP server一直在accept，属于netpoll，因此并非所有goroutine都睡着，检测不触发，程序默认挂死，无任何报错。结论*死锁检测只有没监听端口时才自爆，不要依赖它*
+
+2. ctx取消树
+os发sigint -> sinal.NotifyContext(parentCtx, os.Interrupt)像os注册指定类型的信号监听，返回一个rootCtx和cancelA，当收到指定信号时，自动调用cancelA -> rootCtx被取消，rootCtx.Done()关闭 -> 所有从rootCtx派生的子context全部被标记为取消(具体来说，WithTimeout派生的concelCtx子节点直接注册进父ctx的children map，父ctx cancel时遍历map直接调用每个子ctx的cancel) -> 最里层：http.Client.Do(req)用的ctx被取消，net/http transport检测到ctx.Done关闭，中断正在进行的TCP读写，关闭底层连接，让Do()返回ctx.Err()。
+
+如果不调cancel():
+- children map里的条目在deadline到期前一直持有子ctx引用，导致内存滞留
+- AfterFunc的timer一直挂在runtime时间堆里，导致timer堆积。
+
+  1. signal.NotifyContext返回的stop()做了两件事：恢复信号的默认处理+cancel。如果不调stop，在同进程内第二次调用signal.NotifyContext会发生什么
+  第二次调用能正常工作，但第一次的注册永久泄露。signal.NotifyContext内部会做：建个chan os.Signal(capicity 1) -> signal.Notify(c, ...)把它注册进os/signal包的全局注册表 -> 派生一个WithCancle的子ctx。stop() = signal.Stop(c)摘掉注册 + cancel。不调stop，后果是注册表里那条记录永远持有channel引用，chennel无法GC；子ctx也挂在父的children map上。这是慢性的内存泄露，且第二次ctrl-C会同时取消两棵树(signal包对所有注册channel广播)。
+
+3. 等价变异事件
+mutation集成测试抓不了是因为无论计数在服务端还是客户端，attempts都只会是1次
+  1. 为什么client测计数也是1
+  mutation后attempt 1明明进入了循环体，但是被select的ctx.Done拦截后直接返回了，请求都没有发起。
+  2. 等价变异的定义？为什么等价变异下任何黑盒测试都抓不住，把"黑盒可观测集合"列出来(err, attempts, elapsed, and ...)，说明mutation前后为什么相同或不可区分
+  变异测试(故意往代码里注入一个小bug,called mutant，看测试能不能发现, 无法发现并处理说明测试存在盲区)
+  等价变异(注入的mutant对所有输入都产生与原代码相同的可观测行为，于是任何黑盒测试都无法区分变异前后，杀不死不是测试的错，是这个mutant本质上无害)
+  3. return false的逻辑由谁守护？单元测试和集成测试格子的"视野边界"是什么？
+  单元测试 观测点是 单个函数的返回值，能抓逻辑判断错误，管不了函数是否被正确调用/调用方逻辑是否正确
+  集成测试 观测点是 端到端的可观测行为 能抓各种编排错误，管不了不改变端到端可观测量内部逻辑变化(等价变异)
+  *单元测试问：这个决策对吗？集成测试问这些决策串起来的结果对吗？*等价变异恰好是决策变了但是结果没变，所以单元测试能抓，但是集成测试抓不到。
+
+4. 泄露检测
+NumGoroutine的检测是对当前所有未退出的goroutine数量，包括底层用来tcp连接的goroutine这些。
+  1. 假泄露的6个goroutine，2条连接，每条连接在server测维护conn.serve共1个goroutine，client测readLoop+writeLoop共2个，每条3个。CloseClientConnections()从server侧关闭所有客户端连接->server的conn.serve读到EOF返回-1->client侧的readLoop也读到EOF/连接关闭返回-2 -> writeLoop随之退出(-2)
+  2. 真泄露在pprof gorotine profile什么样？
+  debug=1的输出格式是按栈分组计数
+  - 某一个栈的分组计数异常巨大，如 1000 @，且栈顶是业务函数，阻塞原因是chan receive/select/semacquire，正常程序不会有1000个goroutine停在同一行业务代码
+  - 该计数随时间/请求量单调增长且不回落。跑一轮涨N个，再跑又涨，永不减少。 
+  3. 压测峰值~=3n+9，n个worker goroutine + 2n 个客户端连接goroutine(每个worker持一条keep-alive连接，每条连接client侧readLoop+writeLoop)，总共3n。常数9/10不固定的，是"程序骨架+残留连接+观测噪声",我自己抓的debug=2如下
+  goroutine 1954 [running]:
+  goroutine 1 [select]:
+  goroutine 18 [syscall]:
+  goroutine 34 [select]:
+  goroutine 35 [IO wait]:
+  goroutine 1955 [IO wait]:
+  goroutine 1792 [select]:
+  goroutine 1914 [IO wait]:
+  goroutine 1915 [select]:
+  goroutine 1791 [IO wait]:
+  - 骨架(3个)： main + signal.loop + pprof accept。不开--pprof只有前两个。
+  - 观测噪声(2~5)：每次curl: 6060, pprof server都要为这条连接起server侧goroutine，profile生成时再加1-2个。
+  - 残留空闲连接(0-2): http.Transport的MaxIdleConnsPerHost默认是2，探测结束后，每个worker用完的连接归还池子，池子每host最多留2条空闲。其余直接关闭(readLoop/WriteLoop随之退出)。连接池的idle上限，就是连接goroutine在空闲期的上限。
