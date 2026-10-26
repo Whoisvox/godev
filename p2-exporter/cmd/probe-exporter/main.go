@@ -33,7 +33,7 @@ func main() {
 	probeTotal.WithLabelValues("ok").Inc()
 
 	http.Handle("/metrics", promhttp.Handler())
-	err := http.ListenAndServe(":9090", nil)
+	err := http.ListenAndServe(":9115", nil)
 	if err != nil {
 		log.Fatal(err)
 	}
