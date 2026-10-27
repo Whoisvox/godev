@@ -2,7 +2,11 @@ module github.com/Whoisvox/godev/probe-exporter
 
 go 1.25.9
 
-require github.com/prometheus/client_golang v1.23.1
+require (
+	github.com/prometheus/client_golang v1.23.1
+	gopkg.in/yaml.v2 v2.4.0
+	gopkg.in/yaml.v3 v3.0.1
+)
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -15,5 +19,4 @@ require (
 	github.com/prometheus/procfs v0.16.1 // indirect
 	golang.org/x/sys v0.35.0 // indirect
 	google.golang.org/protobuf v1.36.8 // indirect
-	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
