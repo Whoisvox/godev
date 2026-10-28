@@ -8,7 +8,7 @@ import (
 var probeSuccess = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "probe_success",
-		Help: "Whether the last probe succeeded(statuscode < 499 and not eq 429).",
+		Help: "Whether the last probe succeeded(statuscode < 500 and not eq 429).",
 	},
 	[]string{"name"},
 )
@@ -24,7 +24,7 @@ var probeTotal = prometheus.NewCounterVec(
 var probeDuration = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "probe_duration_seconds",
-		Help: "probe Duration seconds",
+		Help: "durations of last probe in seconds.",
 	},
 	[]string{"name"},
 )

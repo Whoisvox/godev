@@ -11,7 +11,7 @@ import (
 )
 
 type Config struct {
-	Internal time.Duration  `yaml:"internal"`
+	Interval time.Duration  `yaml:"interval"`
 	Targets  []probe.Target `yaml:"targets"`
 }
 
@@ -27,7 +27,7 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	slog.Info("config loaded",
-		"internal", cfg.Internal,
+		"interval", cfg.Interval,
 		"targets", cfg.Targets,
 	)
 	return &cfg, nil

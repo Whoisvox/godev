@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"log"
 	"log/slog"
@@ -32,6 +33,10 @@ func main() {
 		slog.Error("concurrency invalid(> 0)", "concurrency", *concurrency)
 		os.Exit(1)
 	}
+	if *timeout <= 0 {
+		slog.Error("request timeout(>0s)", "timeout", *timeout)
+		os.Exit(1)
+	}
 	opts := probe.Options{
 		Client:      &http.Client{},
 		Concurrency: *concurrency,
@@ -51,23 +56,23 @@ func main() {
 	http.Handle("/metrics", promhttp.Handler())
 	srv := &http.Server{Addr: *addr}
 	go func() {
-		if err := srv.ListenAndServe(); err != nil {
-			slog.Error("bind used", "err", err)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("http server failed", "err", err)
 			os.Exit(1)
 		}
 	}()
 	<-ctx.Done()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("shutdown failed", "err", err)
-		slog.Error("force shutdown ...")
 		os.Exit(1)
 	}
 }
 
 func probeLoop(ctx context.Context, cfg *config.Config, m *exporter.Metrics, opts probe.Options) {
 	responses := probe.ProbeOnce(ctx, cfg.Targets, opts)
+	slog.Debug("results", "response", responses)
 	m.Update(responses)
-	ticker := time.NewTicker(cfg.Internal)
+	ticker := time.NewTicker(cfg.Interval)
 	defer ticker.Stop()
 
 	for {
@@ -77,7 +82,7 @@ func probeLoop(ctx context.Context, cfg *config.Config, m *exporter.Metrics, opt
 		case <-ticker.C:
 			responses = probe.ProbeOnce(ctx, cfg.Targets, opts)
 			m.Update(responses)
-			slog.Info("results", "responses", responses)
+			slog.Debug("results", "response", responses)
 		}
 	}
 }

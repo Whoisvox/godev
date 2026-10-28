@@ -1,4 +1,4 @@
-internal: 30s
+interval: 30s
 targets:
   # --- 正常响应 ---
   - name: httpbin-get
@@ -9,21 +9,17 @@ targets:
     url: https://httpbin.org/user-agent
   - name: httpbin-uuid
     url: https://httpbin.org/uuid
-  - name: httpbin-ip
-    url: https://httpbin.org/ip
-  - name: httpbin-base64
-    url: https://httpbin.org/base64/SGVsbG8gV29ybGQ=
-  - name: httpbin-json
-    url: https://httpbin.org/json
-  - name: httpbin-robots
-    url: https://httpbin.org/robots.txt
   - name: status-404
     url: https://httpbin.org/status/404
   - name: status-500
     url: https://httpbin.org/status/500
   - name: status-503
     url: https://httpbin.org/status/503
-
+  # --- 延迟 / 慢响应 ---
+  - name: slow-1s
+    url: https://httpbin.org/delay/1
+  - name: slow-2s
+    url: https://httpbin.org/delay/2
   # --- 不存在 / 必然失败 ---
   - name: not-exist-1
     url: https://youcantfindme.com

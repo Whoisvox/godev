@@ -43,10 +43,11 @@ func Probe(ctx context.Context, target Target, client *http.Client) Result {
 	duration := time.Since(start)
 	if err != nil {
 		return Result{
-			Name:    target.Name,
-			URL:     target.URL,
-			Success: false,
-			Err:     err,
+			Name:     target.Name,
+			URL:      target.URL,
+			Success:  false,
+			Duration: duration,
+			Err:      err,
 		}
 	}
 	defer resp.Body.Close()
@@ -57,7 +58,7 @@ func Probe(ctx context.Context, target Target, client *http.Client) Result {
 	return Result{
 		Name:       target.Name,
 		URL:        target.URL,
-		Success:    resp.StatusCode != 429 && resp.StatusCode < 499,
+		Success:    resp.StatusCode != 429 && resp.StatusCode < 500,
 		StatusCode: resp.StatusCode,
 		Duration:   duration,
 	}
