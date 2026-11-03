@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -22,8 +23,19 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	if err := yaml.UnmarshalStrict(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
+	}
+	if cfg.Interval <= 0 {
+		return nil, fmt.Errorf("config: interval must be > 0, got %v", cfg.Interval)
+	}
+	if len(cfg.Targets) == 0 {
+		return nil, errors.New("config: no targets defined")
+	}
+	for i, t := range cfg.Targets {
+		if t.Name == "" || t.URL == "" {
+			return nil, fmt.Errorf("config: targets[%d]: name and url required", i)
+		}
 	}
 
 	slog.Info("config loaded",

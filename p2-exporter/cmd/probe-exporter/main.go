@@ -24,17 +24,17 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	var addr = flag.String("listen", ":9115", "metrics listen Addr(:Port)")
+	var addr = flag.String("listen", ":9115", "metrics listen address (host:port)")
 	var configFile = flag.String("config", "targets.yaml", "path of config file")
 	var concurrency = flag.Int("concurrency", 3, "probe concurrency")
-	var timeout = flag.Duration("timeout", 3*time.Second, "each request timeout(3s, 500ms)")
+	var timeout = flag.Duration("timeout", 3*time.Second, "per-request timeout(e.g. 3s, 500ms)")
 	flag.Parse()
 	if *concurrency < 1 {
-		slog.Error("concurrency invalid(> 0)", "concurrency", *concurrency)
+		slog.Error("invalid concurrency", "concurrency", *concurrency, "want", ">0")
 		os.Exit(1)
 	}
 	if *timeout <= 0 {
-		slog.Error("request timeout(>0s)", "timeout", *timeout)
+		slog.Error("invalid timeout", "timeout", *timeout, "want", "> 0s")
 		os.Exit(1)
 	}
 	opts := probe.Options{
