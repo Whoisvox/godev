@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: probe-exporter-config, namespace: godev }
+data:
+  targets.yaml: |
+    interval: 30s
+    targets: 
+      - name: httpbin-get
+        url: https://httpbin.org/get
+      - name: httpbin-headers
+        url: https://httpbin.org/headers
+      - name: httpbin-user-agent
+        url: https://httpbin.org/user-agent
+      - name: httpbin-uuid
+        url: https://httpbin.org/uuid
+      - name: status-404
+        url: https://httpbin.org/status/404
+      - name: status-500
+        url: https://httpbin.org/status/500
+      - name: status-503
+        url: https://httpbin.org/status/503
+      - name: slow-1s
+        url: https://httpbin.org/delay/1
+      - name: slow-2s
+        url: https://httpbin.org/delay/2
+      - name: not-exist-1
+        url: https://youcantfindme.com

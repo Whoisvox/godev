@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  creationTimestamp: null
+  labels:
+    app: probe-exporter
+  name: probe-exporter
+  namespace: godev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: probe-exporter
+  strategy: {}
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        app: probe-exporter
+    spec:
+      imagePullSecrets:
+      - name: harbor-local174
+      terminationGracePeriodSeconds: 10
+      containers:
+      - image: 192.168.5.174:80/godev/probe-exporter:b08d288
+        imagePullPolicy: IfNotPresent
+        name: probe-exporter
+        resources: 
+          requests: 
+            cpu: 10m
+            memory: 32Mi
+          limits: 
+            cpu: 200m
+            memory: 128Mi
+        securityContext: 
+          runAsNonRoot: true
+          runAsUser: 65534
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+        livenessProbe: 
+          httpGet: { path: /metrics, port: 9115}
+          initialDelaySeconds: 5
+          periodSeconds: 30
+        readinessProbe:
+          httpGet: { path: /metrics, port: 9115}
+          initialDelaySeconds: 5
+          periodSeconds: 30
+        volumeMounts: 
+        - name: config-vol
+          mountPath: /etc/probe-exporter
+          readOnly: true
+      volumes: 
+      - name: config-vol
+        configMap: 
+          name: probe-exporter-config
+status: {}

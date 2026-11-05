@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  creationTimestamp: null
+  labels:
+    app: probe-exporter
+  name: probe-exporter
+  namespace: godev
+spec:
+  ports:
+  - name: 9115-9115
+    port: 9115
+    protocol: TCP
+    targetPort: 9115
+  selector:
+    app: probe-exporter
+  type: ClusterIP
+status:
+  loadBalancer: {}
