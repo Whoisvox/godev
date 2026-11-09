@@ -1,0 +1,71 @@
+groups:
+  - name: probe-exporter.availability
+    rules:
+      # ── 被探测目标故障 ──────────────────────────────────────────────
+      # 语义：某个目标的最近一次探测失败，且连续 2m 都失败（interval=30s → 约 4 轮）
+      # 为什么加 for：单轮失败可能只是网络抖动/目标偶发 5xx，立即告警会产生大量噪声。
+      # for 的含义是"expr 持续为真多久才发告警"，是抖动过滤器。
+      - alert: ProbeTargetDown
+        expr: probe_success{service="probe-exporter"} == 0
+        for: 2m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "探测目标 {{ $labels.name }} 连续失败"
+          description: "目标 {{ $labels.name }} ({{ $labels.namespace }}) 已连续 2 分钟探测失败。最近状态码见 probe_http_status_code，延迟见 probe_duration_seconds。"
+
+      # 语义：目标能通但慢。阈值 1s 对应 httpbin delay 类目标，按真实 SLA 调整。
+      - alert: ProbeTargetSlow
+        expr: probe_duration_seconds{service="probe-exporter"} > 1
+        for: 5m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "探测目标 {{ $labels.name }} 响应缓慢"
+          description: "目标 {{ $labels.name }} 最近 5 分钟响应时间持续超过 1s，当前 {{ $value | humanizeDuration }}。"
+
+      # ── 监控系统自身的盲区（meta-alerting）──────────────────────────
+      # 这两条比上面两条更重要：上面告"目标坏了"，这两条告"我看不见目标了"。
+      #
+      # 盲区 1：exporter/pod/抓取链路整个消失。
+      # 此时 probe_* 序列变 stale，任何基于 probe_success 的告警都【不会】触发
+      # （没有数据 = 没有匹配 = 静默），监控系统自己瞎了却无人知晓。
+      # absent() 专门补这个洞：序列不存在时返回 1。
+      - alert: ProbeExporterAbsent
+        expr: absent(probe_success{service="probe-exporter"})
+        for: 3m
+        labels:
+          severity: page
+        annotations:
+          summary: "probe-exporter 指标消失（监控系统自身故障）"
+          description: "已连续 3 分钟抓不到 probe_success。可能原因：pod 挂了 / Service annotation 被删 / 抓取失败。检查 kubectl -n godev get pods -l app=probe-exporter 与 Prometheus targets 页面。"
+
+      # 盲区 2：exporter 活着（/metrics 有响应，liveness 探针通过），
+      # 但内部探测循环卡死（ticker 停了、所有 worker 阻塞等）。
+      # 此时 probe_success 序列还在，值还是上一次的旧值 —— 数据"看起来正常"，
+      # 实际已经停止更新。这是最阴险的故障：既骗过 liveness 探针，又骗过 ProbeTargetDown。
+      # 检测方法：Counter 不再增长 → rate 归零。
+      - alert: ProbeLoopStalled
+        expr: rate(probe_requests_total{service="probe-exporter"}[10m]) == 0
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: "probe-exporter 探测循环停止工作"
+          description: "probe_requests_total 已 10 分钟无增长，但 exporter 仍在响应抓取。探测循环（ticker/worker pool）可能已卡死。"
+
+      # ── 错误率（Counter + rate 的典型用法）─────────────────────────
+      # 用 sum by 聚合掉 name label，得到整体错误率。
+      # 注意分母用 total 而非 ok+error 相加：万一将来 result 增加取值，分母不会漏。
+      - alert: ProbeErrorRateHigh
+        expr: |
+          sum(rate(probe_requests_total{service="probe-exporter",result="error"}[10m]))
+            /
+          sum(rate(probe_requests_total{service="probe-exporter"}[10m]))
+            > 0.5
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "探测整体错误率过高"
+          description: "最近 10 分钟探测错误率 {{ $value | humanizePercentage }}，超过 50% 阈值。可能是 exporter 出网故障（DNS/代理）而非所有目标同时挂掉。"

@@ -6,6 +6,10 @@ metadata:
     app: probe-exporter
   name: probe-exporter
   namespace: godev
+  annotations: 
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9115"
+    prometheus.io/path: "/metrics"
 spec:
   ports:
   - name: 9115-9115

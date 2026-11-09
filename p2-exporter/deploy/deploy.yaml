@@ -1,7 +1,6 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  creationTimestamp: null
   labels:
     app: probe-exporter
   name: probe-exporter
@@ -53,4 +52,3 @@ spec:
       - name: config-vol
         configMap: 
           name: probe-exporter-config
-status: {}
