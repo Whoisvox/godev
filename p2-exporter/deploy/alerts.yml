@@ -7,7 +7,7 @@ groups:
       # for 的含义是"expr 持续为真多久才发告警"，是抖动过滤器。
       - alert: ProbeTargetDown
         expr: probe_success{service="probe-exporter"} == 0
-        for: 2m
+        for: 3m
         labels:
           severity: ticket
         annotations:

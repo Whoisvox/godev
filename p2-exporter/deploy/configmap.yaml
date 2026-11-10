@@ -3,7 +3,9 @@ kind: ConfigMap
 metadata: { name: probe-exporter-config, namespace: godev }
 data:
   targets.yaml: |
-    interval: 30s
+    # 与 Prometheus scrape_interval(1m，kubernetes-service-endpoints job 固定值)对齐，
+    # 避免探测频率高于抓取频率导致 Gauge 中间样本被覆盖
+    interval: 60s
     targets: 
       - name: httpbin-get
         url: https://httpbin.org/get
